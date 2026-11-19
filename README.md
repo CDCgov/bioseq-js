@@ -1,6 +1,8 @@
 # bioseq-js
 
-A Fast, Lightweight Smith-Waterman Sequence Aligner
+A fast, lightweight pairwise sequence aligner: local (Smith-Waterman), global
+(Needleman-Wunsch) and semi-global alignment with affine gap penalties, for DNA,
+RNA and protein. Works in Node and in the browser, and ships with TypeScript types.
 
 ## Use
 
@@ -10,110 +12,258 @@ A Fast, Lightweight Smith-Waterman Sequence Aligner
 
 ### Installation
 
-`bioseq` is packaged as a module for Node environments, but automatically
-attaches itself to `window` if included in a browser. To get it in Node, from
-your project directory,
+From npm:
 
 ```bash
-npm install bioseq --save
+npm install bioseq
 ```
-
-From there, you can require it wherever is convenient:
 
 ```javascript
-const bioseq = require("bioseq");
+// ESM / TypeScript
+import { align } from "bioseq";
+
+// CommonJS
+const { align } = require("bioseq");
 ```
 
-Alternately, if you just want it in the browser, [download it](https://github.com/CDCgov/bioseq-js/archive/master.zip)
-and include it with a script tag, like so:
+In the browser, include the prebuilt script, which defines a global `bioseq`:
 
 ```html
-<script src="bioseq.js"></script>
+<script src="https://unpkg.com/bioseq/dist/bioseq.min.js"></script>
+<!-- or: https://cdn.jsdelivr.net/npm/bioseq/dist/bioseq.min.js -->
+<!-- or a local copy of dist/bioseq.min.js -->
 ```
 
 ### Quick Start Example
 
 ```javascript
-var target = "ATAGCTAGCTAGCATAAGC";
-var query = "AGCTAcCGCAT";
+import { align, cigar2str, cigar2gaps, alignmentStats } from "bioseq";
 
-var rst = bioseq.align(target, query);
+const reference = "ATAGCTAGCTAGCATAAGC";
+const query = "AGCTAcCGCAT";
 
-console.log("Score: ", rst.score);
-console.log("Starting position: ", rst.position);
-console.log("CIGAR: ", bioseq.cigar2str(rst.CIGAR));
+const aln = align(reference, query, { mode: "local" });
 
-var fmt = bioseq.cigar2gaps(target, query, rst.position, rst.CIGAR);
+console.log("Score:", aln.score);
+console.log("CIGAR:", cigar2str(aln.CIGAR));
+console.log("Reference:", aln.refStart, "-", aln.refEnd);
+console.log("Query:", aln.queryStart, "-", aln.queryEnd);
 
-console.log(fmt[0]);
-console.log(fmt[1]);
+const [refRow, queryRow] = cigar2gaps(reference, query, aln.refStart, aln.CIGAR);
+console.log(refRow);
+console.log(queryRow);
+
+const stats = alignmentStats(reference, query, aln);
+console.log(stats.matches, "matches,", stats.gapOpens, "gap,", (stats.identity * 100).toFixed(1) + "% identity");
+console.log("Extended CIGAR:", stats.extendedCigar);
 ```
 
-For a more comprehensive example, view the source of [demo/index.html](https://github.com/CDCgov/bioseq-js/blob/master/demo/index.html#L67)
+Output:
+
+```
+Score: 6
+CIGAR: 5M2I4M
+Reference: 6 - 15
+Query: 0 - 11
+AGCTA--GCAT
+AGCTAcCGCAT
+9 matches, 1 gap, 81.8% identity
+Extended CIGAR: 5=2I4=
+```
+
+For a more comprehensive example, view the source of [demo/index.html](https://github.com/CDCgov/bioseq-js/blob/master/demo/index.html).
 
 ### API
 
-bioseq is an object with the following functions: align, cigar2gaps, cigar2str,
-bsg_enc_seq, gen_query_profile, gen_score_matrix, makeAlphabetMap, and
-makeIntArray.
+All functions are exported by name (and as properties of the global `bioseq`
+in the browser).
 
-In general, the only functions of general interest are `align` and `cigar2*`,
-so let's talk about those.
+#### `align(reference, query, options?)`
 
-#### bioseq.align
+Aligns `query` against `reference` and returns an alignment, or `null` (see below).
+`reference` and `query` are strings, or arrays of already-encoded symbol codes.
 
-`align` is the fundamental function of `bioseq`. It accepts seven parameters:
+```javascript
+align(reference, query, { mode, matrix, gap, band, table, scoreOnly });
+```
 
-- _reference_ - the reference sequence
-- _query_ - the query sequence or profile
+| Option      | Default     | Description |
+| ----------- | ----------- | ----------- |
+| `mode`      | `"local"`   | `"local"`, `"global"` or `"semiglobal"` (see below). |
+| `matrix`    | `[1, -1]`   | `[match, mismatch]` scores, or a full square substitution matrix indexed by symbol code (e.g. `BLOSUM62`). |
+| `gap`       | `[1, 1]`    | Affine gap penalties `[open, extend]`; a gap of length k costs `open + k * extend`. A single number is a linear gap penalty. Signs are ignored, so `[-1, -1]` works too. |
+| `band`      | unbanded    | Band width: only cells within this distance of the main diagonal are computed. Automatically widened to at least the length difference of the two sequences. Ignored for `semiglobal`. |
+| `table`     | `nt5`       | Encoding table mapping characters to symbol codes. Must match `matrix` (use `aa24` with `BLOSUM62`). |
+| `scoreOnly` | `false`     | Skip the traceback and return only `score`, `refEnd` and `queryEnd`, using O(query) memory. |
 
-And, optionally:
+The legacy positional signature from 0.1.x still works:
+`align(reference, query, is_local, matrix, gapsc, w, table)`.
 
-- is_local - perform local alignment
-- matrix - square score matrix or [match,mismatch] array
-- gapsc - [gap_open,gap_ext] array; k-length gap costs gap_open+gap_ext
-- w - bandwidth, disabled by default
-- table - encoding table. It defaults to bioseq.nt5.
+**Modes**
 
-Returns an object containing a `score`, `position`, and `CIGAR`. CIGAR is
-encoded in the BAM way, where higher 28 bits keeps the length and lower 4 bits
-the operation in order of 'MIDNSH'. See `bioseq.cigar2str()` for converting
-CIGAR to string.
+- `local` - Smith-Waterman. The best-scoring pair of substrings; unaligned
+  query ends are soft-clipped (`S`).
+- `global` - Needleman-Wunsch. Both sequences are aligned end to end.
+- `semiglobal` - the whole query is aligned to its best-matching region of the
+  reference; gaps at the ends of the reference are free. Typical for mapping a
+  read, gene or primer onto a longer sequence.
 
-#### bioseq.cigar2str
+**Return value**
 
-Before I get in to what this function does, let's talk about what it needs.
-CIGAR is an encoding scheme for sequence alignment instructions. Basically,
-it's a list of instructions to make two sequences line up. These instructions
-are assembled from a very simple set:
+```typescript
+{
+  score: number;
+  refStart: number;   // 0-based, inclusive
+  refEnd: number;     // 0-based, exclusive
+  queryStart: number; // 0-based, inclusive
+  queryEnd: number;   // 0-based, exclusive
+  position: number;   // alias of refStart, kept for compatibility
+  CIGAR: number[];    // packed CIGAR, see below
+}
+```
 
-- M for match
-- I for insertion
-- D for deletion
-- N for gap
-- S for substitution
-- H for hard clipping
+With `scoreOnly: true` the result contains only `score`, `refEnd` and `queryEnd`.
 
-Each of these can be preceded by an integer, indicating the number of base pairs
-for which this instruction is correct between the two sequences. However, CIGARs
-are stored as simpler machine instructions, rather than strings. So, if you
-want to show the CIGAR (for some reason), you're going to need this.
+A **local** alignment returns `null` when no positive-scoring alignment exists
+(for example `align("AAAA", "TTTT")`), so check the result before using it.
 
-#### bioseq.cigar2gaps
+A `RangeError` is thrown if a sequence contains a symbol outside the score
+matrix (usually an encoding table / matrix mismatch), or if the traceback would
+need too much memory (use `band` or `scoreOnly`).
 
-Takes a pair of sequences and a CIGAR and returns an array of sequences which
-have been aligned according to the instructions in the CIGAR.
+#### CIGAR
 
-- _reference_ - The same reference sequence you passed to `bioseq.align`
-- _query_ - The same query you passed to `bioseq.align`
-- _start_ - The `position` value of the object returned by `bioseq.align`
-- _cigar_ - The `CIGAR` value of the object retruned by `bioseq.align`
+A CIGAR describes how the query lines up with the reference. `align` returns it
+as an array of numbers in the BAM way: each element is `(length << 4) | op`,
+where `op` indexes the string `"MIDNSHP=XB"`. Use `cigar2str` to get the
+familiar text form.
 
-And optionally,
+| Op  | Meaning |
+| --- | ------- |
+| `M` | alignment match (the residues may be identical or different) |
+| `I` | insertion to the reference (extra residues in the query) |
+| `D` | deletion from the reference (residues missing from the query) |
+| `N` | skipped region of the reference |
+| `S` | soft clipping (query residues present but not aligned) |
+| `H` | hard clipping (query residues absent) |
+| `P` | padding |
+| `=` | sequence match |
+| `X` | sequence mismatch |
 
-- fixed - A boolean indicating whether the reference is fixed or modifiable.
-  Basically, if you're aligning many sequences to the same reference, you should
-  set fixed to `true`. Otherwise you can [just leave it out](https://developer.mozilla.org/en-US/docs/Glossary/Falsy).
+`align` itself only produces `M`, `I`, `D` and `S`; the others are understood by
+the helpers below (`alignmentStats` produces `=` and `X`).
+
+#### `cigar2str(cigar)` and `str2cigar(str)`
+
+Convert between the packed form and the string form.
+
+```javascript
+cigar2str(aln.CIGAR);     // "5M2I4M"
+str2cigar("5M2I4M");      // [80, 33, 64]
+```
+
+(In 0.1.x `cigar2str` returned a comma-separated string like `"5M,2I,4M"`.)
+
+#### `cigar2gaps(reference, query, start, cigar, fixed?)`
+
+Returns `[referenceRow, queryRow]`: the two sequences laid out according to the
+CIGAR, with `-` for gaps. Soft-clipped query bases are not shown.
+
+- _start_ - the `refStart` of the alignment
+- _cigar_ - the `CIGAR` of the alignment
+- _fixed_ - if `true`, insertions relative to the reference are dropped so the
+  output stays in reference coordinates; useful when aligning many queries to
+  the same reference.
+
+#### `alignmentStats(reference, query, aln)`
+
+Takes the same sequences (as strings) and the result of `align`, and returns:
+
+```javascript
+{
+  matches, mismatches,     // aligned columns that are identical / different
+  insertions, deletions,   // number of residues inserted / deleted
+  gapOpens,                // number of gap runs
+  length,                  // alignment columns (excluding soft clips)
+  identity,                // matches / length, between 0 and 1
+  extendedCigar,           // CIGAR using = and X instead of M, e.g. "5=2I4="
+}
+```
+
+#### Encoding tables and matrices
+
+Characters are converted to small integer codes using an encoding table. Each
+table is an array indexed by character code.
+
+| Table  | Alphabet |
+| ------ | -------- |
+| `nt5`  | `ACGT` plus one catch-all symbol for anything else (default) |
+| `nac`  | IUPAC nucleotide codes `ACGTURYMKWSBDHVN` |
+| `aac`  | amino acids `ARNDCQEGHILKMFPSTWYVBZX` |
+| `aa24` | amino acids plus stop: `ARNDCQEGHILKMFPSTWYVBZX*`; matches the `BLOSUM62` matrix |
+
+`BLOSUM62` is the standard 24x24 protein substitution matrix. A protein example:
+
+```javascript
+import { align, aa24, BLOSUM62, cigar2str, cigar2gaps } from "bioseq";
+
+const ref = "MKTAYIAKQRQISFVK";
+const query = "MKAYIAKQRISFVK";
+const aln = align(ref, query, {
+  mode: "global",
+  table: aa24,
+  matrix: BLOSUM62,
+  gap: [11, 1],
+});
+
+console.log(aln.score, cigar2str(aln.CIGAR)); // 43 2M1D7M1D5M
+console.log(cigar2gaps(ref, query, aln.refStart, aln.CIGAR));
+// [ 'MKTAYIAKQRQISFVK', 'MK-AYIAKQR-ISFVK' ]
+```
+
+Other helpers: `encode(seq, table)` returns a `Uint8Array` of symbol codes;
+`alphabetSize(table)` returns the number of symbols in a table;
+`genScoreMatrix(n, match, mismatch)` builds an n x n match/mismatch matrix (the
+last symbol scores 0 against everything); `makeAlphabetMap(str, defaultVal)`
+builds your own table; `reverseComplement(seq)` returns the reverse complement
+of a nucleotide string (IUPAC codes aware, case preserved).
+
+```javascript
+reverseComplement("ATGCN"); // "NGCAT"
+```
+
+#### Deprecated
+
+These 0.1.x helpers are still exported but will be removed in a future
+release: `gen_score_matrix` (use `genScoreMatrix`), `bsg_enc_seq` (use
+`encode`), `gen_query_profile` (not needed; `align` builds its own profile) and
+`makeIntArray`.
+
+### Performance
+
+Alignment takes O(n * m) time for sequences of length n and m. The traceback
+needs one byte per cell: n * m bytes, or about n * (2 * band + 1) when `band`
+is used. Practical tips:
+
+- For sequences of similar length, set `band` (e.g. a global alignment of two
+  10 kb sequences with `band: 50` takes about 23 ms instead of about 440 ms).
+- If you only need the score, pass `scoreOnly: true`; no traceback is stored.
+- Run `npm run bench` to benchmark on your machine.
+
+## Development
+
+```bash
+npm install
+npm test          # vitest
+npm run lint      # biome
+npm run typecheck # tsc --noEmit
+npm run build     # tsup -> dist/
+npm run bench
+```
+
+Source lives in `src/`. The built `dist/` directory is committed because the
+GitHub Pages demo loads `dist/bioseq.js`. See [CHANGELOG.md](CHANGELOG.md) for
+release notes.
 
 ## Theory
 

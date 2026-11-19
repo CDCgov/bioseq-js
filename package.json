@@ -1,20 +1,67 @@
 {
   "name": "bioseq",
-  "version": "0.1.5",
-  "description": "A Fast, Lightweight Smith-Waterman Sequence Aligner",
-  "main": "dist/bioseq.js",
+  "version": "0.2.0",
+  "description": "A fast, lightweight pairwise sequence aligner (Smith-Waterman, Needleman-Wunsch, semi-global) with affine gaps",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "browser": "./dist/bioseq.min.js",
+  "unpkg": "./dist/bioseq.min.js",
+  "jsdelivr": "./dist/bioseq.min.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "npx terser dist/bioseq.js -c -m > dist/bioseq.min.js",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "bench": "node bench/bench.js",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "serve": "npx http-server"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/CDCgov/bioseq-js.git"
   },
+  "keywords": [
+    "bioinformatics",
+    "alignment",
+    "smith-waterman",
+    "needleman-wunsch",
+    "sequence",
+    "dna",
+    "protein",
+    "cigar"
+  ],
   "author": "Tony Boyles <nsp3@cdc.gov>",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/CDCgov/bioseq-js/issues"
   },
-  "homepage": "https://CDCgov.github.io/bioseq-js"
+  "homepage": "https://CDCgov.github.io/bioseq-js",
+  "devDependencies": {
+    "@biomejs/biome": "2.6.8",
+    "@types/node": "22.20.5",
+    "fast-check": "4.10.3",
+    "tinybench": "6.2.4",
+    "tsup": "9.0.0",
+    "typescript": "5.9.3",
+    "vitest": "5.1.1"
+  }
 }
