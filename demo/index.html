@@ -34,7 +34,7 @@
 	<div class="container" style="max-width: 960px;">
 		<header class="row">
 			<h1 class="w-100 text-center">bioseq Aligner</h1>
-			<p class="w-100 text-center">Forked from Li Heng's <a href="https://github.com/lh3/bioseq-js" target="_blank">bioseq.js</a>. Source code on <a href="https://github.com/aaboyles/bioseq">GitHub</a>.</p>
+			<p class="w-100 text-center">Forked from Li Heng's <a href="https://github.com/lh3/bioseq-js" target="_blank">bioseq.js</a>. Source code on <a href="https://github.com/CDCgov/bioseq-js">GitHub</a>.</p>
 		</header>
 		<main role="main" class="row">
 			<div class="form-group col text-center">
@@ -76,6 +76,18 @@ query: human D-loop, 1122bp" />
 									<label for="gape">extension:</label>
 									<input type="number" class="form-control form-control-sm" value="-1" id="gape"/>
 								</div>
+								<div class="form-group col-6">
+									<label for="mode">mode:</label>
+									<select class="form-control form-control-sm" id="mode">
+										<option value="local" selected>local</option>
+										<option value="global">global</option>
+										<option value="semiglobal">semiglobal</option>
+									</select>
+								</div>
+								<div class="form-group col-6">
+									<label for="band">band width (optional):</label>
+									<input type="number" min="0" class="form-control form-control-sm" placeholder="unbanded" id="band"/>
+								</div>
 								</div>
 							</div>
 						</div>
@@ -111,11 +123,28 @@ query: human D-loop, 1122bp" />
 			var mms  = parseInt($('#mismatch').val());
 			var gapo = parseInt($('#gapo').val());
 			var gape = parseInt($('#gape').val());
-			var time_start = new Date().getTime();
-			var rst = bioseq.align(target, query, true, [ms, mms], [gapo, gape]);
-			var fmt = bioseq.cigar2gaps(target, query, rst.position, rst.CIGAR, true);
-			var elapse = (new Date().getTime() - time_start) / 1000.0;
-			$('#output').text(fmt[0] + '\n' + fmt[1]);
+			var mode = $('#mode').val();
+			var bandText = $('#band').val();
+			var opts = { mode: mode, matrix: [ms, mms], gap: [gapo, gape] };
+			if (bandText !== '' && !isNaN(parseInt(bandText))) opts.band = parseInt(bandText);
+			var time_start = performance.now();
+			var rst = bioseq.align(target, query, opts);
+			if (rst === null) {
+				var none = performance.now();
+				$('#output').text('No alignment found');
+				$('#runtime').html("Alignment computed in " + ((none - time_start) / 1000.0).toFixed(3) + "s");
+				return;
+			}
+			var fmt = bioseq.cigar2gaps(target, query, rst.refStart, rst.CIGAR, true);
+			var stats = bioseq.alignmentStats(target, query, rst);
+			var elapse = (performance.now() - time_start) / 1000.0;
+			var summary =
+				'Score: ' + rst.score + '\n' +
+				'CIGAR: ' + bioseq.cigar2str(rst.CIGAR) + '\n' +
+				'Target: ' + rst.refStart + '-' + rst.refEnd + '  Query: ' + rst.queryStart + '-' + rst.queryEnd + '\n' +
+				'Identity: ' + (stats.identity * 100).toFixed(1) + '% (' + stats.matches + '/' + stats.length + '), ' +
+				stats.mismatches + ' mismatches, ' + stats.gapOpens + ' gaps\n\n';
+			$('#output').text(summary + fmt[0] + '\n' + fmt[1]);
 			$('#runtime').html("Alignment computed in " + elapse.toFixed(3) + "s");
 		});
 	});
